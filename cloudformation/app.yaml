@@ -1,0 +1,46 @@
+Transform: AWS::Serverless-2016-10-31
+
+Parameters:
+  DatabaseName:
+    Type: String
+  MasterUsername:
+    Type: String
+    Default: 'root'
+  MasterUserPassword:
+    Type: String
+    NoEcho: true
+  LocalMachineIp:
+    Type: String
+  BastionKeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: EC2 key used to connect to the bastion host
+
+Resources:
+  RDSEventsConsumer:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: ./consumer.yaml
+
+  Network:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: ./network.yaml
+
+  Datasource:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: ./rds.yaml
+      Parameters:
+        DatabaseName: !Ref DatabaseName
+        ClusterName: 'rds-events-cluster'
+        EngineVersion: '5.7.mysql_aurora.2.07.2'
+        MasterUsername: !Ref MasterUsername
+        MasterUserPassword: !Ref MasterUserPassword
+        VpcId: !GetAtt Network.Outputs.VpcId
+        LocalMachineIp: !Ref LocalMachineIp
+        BastionKeyName: !Ref BastionKeyName
+        PublicSubnetId: !GetAtt Network.Outputs.PublicSubnet
+        PrivateSubnetIdA: !GetAtt Network.Outputs.PrivateSubnetA
+        PrivateSubnetIdB: !GetAtt Network.Outputs.PrivateSubnetB
+        PrivateSubnetIdC: !GetAtt Network.Outputs.PrivateSubnetC
+        RDSEventsLambdaArn: !GetAtt RDSEventsConsumer.Outputs.RDSEventsConsumerArn

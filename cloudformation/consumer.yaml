@@ -1,0 +1,29 @@
+AWSTemplateFormatVersion: 2010-09-09
+Transform: AWS::Serverless-2016-10-31
+Description: Event logger stack
+
+Resources:
+  RDSEventsConsumerLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${RDSEventsConsumer}'
+      RetentionInDays: 14
+
+  RDSEventsConsumer:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: 'RDS-EVENTS-CONSUMER'
+      Handler: index.handler
+      Runtime: nodejs12.x
+      Timeout: 5
+      MemorySize: 128
+      ReservedConcurrentExecutions: 10
+      InlineCode: |
+        exports.handler = async(input, context, callback) => {
+          console.log('input', input);
+        }
+
+Outputs:
+  RDSEventsConsumerArn:
+    Description: 'RDS events consumer lambda arn'
+    Value: !GetAtt RDSEventsConsumer.Arn

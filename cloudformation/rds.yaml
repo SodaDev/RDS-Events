@@ -1,0 +1,158 @@
+# https://raw.githubusercontent.com/awslabs/aws-cloudformation-templates/master/community/services/RDS/aurora-serverless/template.yml
+AWSTemplateFormatVersion: 2010-09-09
+Description: Database stack
+
+Parameters:
+  DatabaseName:
+    Type: String
+  ClusterName:
+    Type: String
+  EngineVersion:
+    Type: String
+  MasterUsername:
+    Type: String
+    Default: root
+  MasterUserPassword:
+    Type: String
+    NoEcho: true
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+  LocalMachineIp:
+    Type: String
+  BastionImageId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/amzn-ami-hvm-x86_64-ebs
+  BastionKeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: EC2 key used to connect to the bastion host
+  PublicSubnetId:
+    Type: String
+  PrivateSubnetIdA:
+    Type: String
+  PrivateSubnetIdB:
+    Type: String
+  PrivateSubnetIdC:
+    Type: String
+  RDSEventsLambdaArn:
+    Type: String
+
+Resources:
+  ClusterSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub 'Cluster access for ${ClusterName}'
+      SecurityGroupIngress:
+        - SourceSecurityGroupId: !Ref BastionSecurityGroup
+          FromPort: 3306
+          ToPort: 3306
+          IpProtocol: 'TCP'
+      SecurityGroupEgress:
+        - CidrIp: 0.0.0.0/0
+          FromPort: -1
+          ToPort: -1
+          IpProtocol: '-1'
+      VpcId: !Ref VpcId
+
+  RDSAWSServicesRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: RDSToAwsServicesAccess
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - rds.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /service-role/
+      Policies:
+        - PolicyName: LambdasAccessPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Action:
+                  - lambda:InvokeFunction
+                Resource:
+                  - !Ref RDSEventsLambdaArn
+                Effect: Allow
+
+  ClusterParameterGroup:
+    Type: AWS::RDS::DBClusterParameterGroup
+    Properties:
+      Family: "aurora-mysql5.7"
+      Description: "Custom parameter group"
+      Parameters:
+        collation_connection: utf8_general_ci
+        collation_server: utf8_general_ci
+        character_set_connection: utf8
+        character_set_database: utf8
+        character_set_server: utf8
+        aws_default_lambda_role: !GetAtt RDSAWSServicesRole.Arn
+
+  DbCluster:
+    Type: AWS::RDS::DBCluster
+    DeletionPolicy: Delete
+    Properties:
+      Engine: aurora-mysql
+      EngineMode: provisioned
+      EngineVersion: !Ref EngineVersion
+      DatabaseName: !Ref DatabaseName
+      MasterUsername: !Ref MasterUsername
+      MasterUserPassword: !Ref MasterUserPassword
+      DBClusterIdentifier: !Ref ClusterName
+      VpcSecurityGroupIds:
+        - !Ref ClusterSecurityGroup
+      DBClusterParameterGroupName: !Ref ClusterParameterGroup
+      DBSubnetGroupName: !Ref DBSubnetGroup
+      AssociatedRoles:
+        - RoleArn: !GetAtt RDSAWSServicesRole.Arn
+
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: 'RDS Events cluster subnets'
+      SubnetIds:
+        - !Ref PrivateSubnetIdA
+        - !Ref PrivateSubnetIdB
+        - !Ref PrivateSubnetIdC
+
+  ClusterInstanceA:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBClusterIdentifier: !Ref DbCluster
+      DBInstanceClass: db.t3.small
+      DBSubnetGroupName: !Ref DBSubnetGroup
+      Engine: aurora-mysql
+
+  BastionSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub 'Bastion for ${ClusterName}'
+      SecurityGroupIngress:
+        - CidrIp: !Sub '${LocalMachineIp}/32'
+          FromPort: 22
+          ToPort: 22
+          IpProtocol: 'TCP'
+      SecurityGroupEgress:
+        - CidrIp: 0.0.0.0/0
+          FromPort: -1
+          ToPort: -1
+          IpProtocol: '-1'
+      VpcId: !Ref VpcId
+
+  Bastion:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref BastionImageId
+      InstanceType: t2.micro
+      KeyName: !Ref BastionKeyName
+      Monitoring: false
+      SubnetId: !Ref PublicSubnetId
+      SecurityGroupIds:
+        - !Ref BastionSecurityGroup
+      UserData: !Base64 'sudo yum install mysql --assumeyes'
+      Tags:
+        - Key: Name
+          Value: 'RDS Events Bastion'
